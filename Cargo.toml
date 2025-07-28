@@ -7,5 +7,7 @@ edition = "2024"
 chrono = "0.4.41"
 cpal = "0.16.0"
 freya = "0.3.4"
+
 hound = "3.5.1"
 dioxus = { version = "0.6", features = ["macro", "hooks"], default-features = false }
+nojson = "0.3.2"
