@@ -1,3 +1,5 @@
 /target
 *.wav
+*.flac
+*.pcm
 settings.json
