@@ -2,6 +2,8 @@ use freya::prelude::*;
 use nojson::{DisplayJson, Json, JsonFormatter, JsonParseError, RawJsonValue, json};
 use std::fs;
 use std::path::Path;
+use dioxus_i18n::{prelude::*, t};
+use crate::i18n::Language;
 
 #[derive(Clone, PartialEq)]
 pub struct AppSettings {
@@ -9,8 +11,9 @@ pub struct AppSettings {
     pub sample_rate: u32,
     pub bit_depth: u16,
     pub compressor_enabled: bool,
-    // pub compressor_threshold_db: f32,
-    // pub compressor_ratio: f32,
+    pub compressor_threshold_db: f32,
+    pub compressor_ratio: f32,
+    pub language: Language,
 }
 
 #[derive(Clone, PartialEq)]
@@ -34,7 +37,13 @@ impl DisplayJson for AppSettings {
             )?;
             f.member("sample_rate", self.sample_rate)?;
             f.member("bit_depth", self.bit_depth)?;
-            f.member("compressor_enabled", self.compressor_enabled)
+            f.member("compressor_enabled", self.compressor_enabled)?;
+            f.member("compressor_threshold_db", self.compressor_threshold_db)?;
+            f.member("compressor_ratio", self.compressor_ratio)?;
+            f.member("language", match self.language {
+                Language::Japanese => "ja",
+                Language::English => "en",
+            })
         })
     }
 }
@@ -63,28 +72,44 @@ impl<'text, 'raw> TryFrom<RawJsonValue<'text, 'raw>> for AppSettings {
             },
             Err(_) => false,
         };
-        // let compressor_threshold_db = match value.to_member("compressor_threshold_db") {
-        //     Ok(member) => match member.required() {
-        //         Ok(val) => val.try_into().unwrap_or(-20.0),
-        //         Err(_) => -20.0,
-        //     },
-        //     Err(_) => -20.0,
-        // };
-        // let compressor_ratio = match value.to_member("compressor_ratio") {
-        //     Ok(member) => match member.required() {
-        //         Ok(val) => val.try_into().unwrap_or(4.0),
-        //         Err(_) => 4.0,
-        //     },
-        //     Err(_) => 4.0,
-        // };
+        let compressor_threshold_db = match value.to_member("compressor_threshold_db") {
+            Ok(member) => match member.required() {
+                Ok(val) => val.try_into().unwrap_or(-20.0),
+                Err(_) => -20.0,
+            },
+            Err(_) => -20.0,
+        };
+        let compressor_ratio = match value.to_member("compressor_ratio") {
+            Ok(member) => match member.required() {
+                Ok(val) => val.try_into().unwrap_or(4.0),
+                Err(_) => 4.0,
+            },
+            Err(_) => 4.0,
+        };
+
+        // 言語設定（オプション、デフォルト値あり）
+        let language = match value.to_member("language") {
+            Ok(member) => match member.required() {
+                Ok(val) => {
+                    let lang_str: String = val.try_into().unwrap_or("ja".to_string());
+                    match lang_str.as_str() {
+                        "en" => Language::English,
+                        _ => Language::Japanese,
+                    }
+                },
+                Err(_) => Language::Japanese,
+            },
+            Err(_) => Language::Japanese,
+        };
 
         Ok(AppSettings {
             audio_format,
             sample_rate,
             bit_depth,
             compressor_enabled,
-            // compressor_threshold_db,
-            // compressor_ratio,
+            compressor_threshold_db,
+            compressor_ratio,
+            language,
         })
     }
 }
@@ -97,8 +122,9 @@ impl Default for AppSettings {
             sample_rate: 44100,
             bit_depth: 16,
             compressor_enabled: false,
-            // compressor_threshold_db: -20.0,
-            // compressor_ratio: 4.0,
+            compressor_threshold_db: -20.0,
+            compressor_ratio: 4.0,
+            language: Language::Japanese,
         }
     }
 }
@@ -135,6 +161,16 @@ impl AppSettings {
 pub fn SettingsPage(on_navigate_to_recording: EventHandler<()>) -> Element {
     let mut settings = use_signal(|| AppSettings::load());
     let mut save_message = use_signal(|| String::new());
+    let mut i18n = i18n();
+
+    // 言語が変更されたら、i18nの言語も更新
+    use_effect(move || {
+        let current_language = settings.read().language;
+        match current_language {
+            Language::Japanese => i18n.set_language("ja".parse().unwrap_or_default()),
+            Language::English => i18n.set_language("en".parse().unwrap_or_default()),
+        };
+    });
 
     rsx! {
         rect {
@@ -157,7 +193,7 @@ pub fn SettingsPage(on_navigate_to_recording: EventHandler<()>) -> Element {
                 label {
                     color: "white",
                     font_size: "28",
-                    "設定ページ"
+                    "{t!(\"settings_title\")}"
                 }
 
                 rect { height: "30" }
@@ -176,7 +212,7 @@ pub fn SettingsPage(on_navigate_to_recording: EventHandler<()>) -> Element {
                     label {
                         color: "white",
                         font_size: "20",
-                        "音声フォーマット設定"
+                        "{t!(\"audio_format_section\")}"
                     }
 
                     rect { height: "15" }
@@ -189,7 +225,7 @@ pub fn SettingsPage(on_navigate_to_recording: EventHandler<()>) -> Element {
                             color: "white",
                             font_size: "16",
                             width: "120",
-                            "保存形式: "
+                            "{t!(\"save_format\")}: "
                         }
 
                         Dropdown {
@@ -305,6 +341,43 @@ pub fn SettingsPage(on_navigate_to_recording: EventHandler<()>) -> Element {
                                     settings.write().bit_depth = 32;
                                 },
                                 label { "32 bit" }
+                            }
+                        }
+                    }
+
+                    rect { height: "15" }
+
+                    rect {
+                        direction: "horizontal",
+                        cross_align: "center",
+
+                        label {
+                            color: "white",
+                            font_size: "16",
+                            width: "120",
+                            "言語: "
+                        }
+
+                        Dropdown {
+                            value: match settings.read().language {
+                                Language::Japanese => "ja",
+                                Language::English => "en",
+                            },
+
+                            DropdownItem {
+                                value: "ja",
+                                onpress: move |_| {
+                                    settings.write().language = Language::Japanese;
+                                },
+                                label { "日本語" }
+                            }
+
+                            DropdownItem {
+                                value: "en",
+                                onpress: move |_| {
+                                    settings.write().language = Language::English;
+                                },
+                                label { "English" }
                             }
                         }
                     }

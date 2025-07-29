@@ -12,6 +12,8 @@ hound = "3.5.1"
 dioxus = { version = "0.6", features = ["macro", "hooks"], default-features = false }
 nojson = "0.3.2"
 flacenc = "0.5.0"
+dioxus-i18n = "0.4.3"
+unic-langid = "0.9"
 
 [profile.release]
 lto = true

@@ -1,8 +1,10 @@
 #![windows_subsystem = "windows"]
 use freya::prelude::*;
+use dioxus_i18n::prelude::*;
 mod record_page;
 mod setting_page;
 mod effect;
+mod i18n;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -11,6 +13,7 @@ enum Page {
 }
 
 fn app() -> Element {
+    use_init_i18n(|| i18n::init_i18n());
     let mut current_page = use_signal(|| Page::Recording);
 
     rsx! {
