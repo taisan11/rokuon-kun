@@ -1,9 +1,17 @@
 use freya::prelude::*;
 use crate::setting_page::{AppSettings, AudioFormat};
+use crate::effect;
 
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use hound::{WavSpec, WavWriter};
+use flacenc::{
+    config::Encoder as FlacEncoder, 
+    source::MemSource, 
+    bitsink::ByteSink, 
+    component::BitRepr,
+    error::Verify
+};
 use std::{
     sync::{Arc, Mutex},
     thread,
@@ -125,6 +133,13 @@ fn RecordingButton(
                                             );
                                             (filename, None)
                                         },
+                                        AudioFormat::Flac => {
+                                            let filename = format!("{}-{}.flac",
+                                                now.format("%Y-%m-%d-%H-%M-%S"),
+                                                device_name.replace(" ", "_")
+                                            );
+                                            (filename, None)
+                                        },
                                     };
 
                                     let pcm_file = if matches!(settings.audio_format, AudioFormat::Pcm) {
@@ -133,12 +148,27 @@ fn RecordingButton(
                                         None
                                     };
 
+                                    // FLAC用のサンプルバッファ
+                                    let flac_samples = if matches!(settings.audio_format, AudioFormat::Flac) {
+                                        Some(Arc::new(Mutex::new(Vec::<i32>::new())))
+                                    } else {
+                                        None
+                                    };
+
                                     let err_fn = |err| eprintln!("録音エラー: {:?}", err);
                                     let writer_clone = writer_opt.clone();
                                     let pcm_file_clone = pcm_file.clone();
+                                    let flac_samples_clone = flac_samples.clone();
                                     let stop_flag_stream = Arc::clone(&stop_flag_clone);
                                     let waveform_clone = waveform_data_clone.clone();
                                     let format = settings.audio_format.clone();
+                                    
+                                    // コンプレッサー設定をローカル変数にコピー
+                                    let compressor_enabled = settings.compressor_enabled;
+                                    // let compressor_threshold_db = settings.compressor_threshold_db;
+                                    // let compressor_ratio = settings.compressor_ratio;
+                                    let compressor_threshold_db:f32 = -20.0;
+                                    let compressor_ratio:f32 = 4.0;
 
                                     let stream = match config.sample_format() {
                                         cpal::SampleFormat::F32 => device.build_input_stream(
@@ -148,11 +178,22 @@ fn RecordingButton(
                                                     return;
                                                 }
 
+                                                // コンプレッサーを適用（設定で有効な場合）
+                                                let processed_data = if compressor_enabled {
+                                                    effect::compress_audio(
+                                                        data,
+                                                        compressor_threshold_db,
+                                                        compressor_ratio
+                                                    )
+                                                } else {
+                                                    data.to_vec()
+                                                };
+
                                                 // 波形データを更新
                                                 {
                                                     let mut waveform = waveform_clone.lock().unwrap();
                                                     waveform.clear();
-                                                    waveform.extend_from_slice(data);
+                                                    waveform.extend_from_slice(&processed_data);
                                                     if waveform.len() > 300 {
                                                         let len = waveform.len();
                                                         waveform.drain(0..len-300);
@@ -165,7 +206,7 @@ fn RecordingButton(
                                                         if let Some(ref writer_arc) = writer_clone {
                                                             let mut writer_lock = writer_arc.lock().unwrap();
                                                             if let Some(writer) = writer_lock.as_mut() {
-                                                                for &sample in data {
+                                                                for &sample in &processed_data {
                                                                     let sample_i16 = (sample * i16::MAX as f32) as i16;
                                                                     writer.write_sample(sample_i16).unwrap();
                                                                 }
@@ -176,9 +217,18 @@ fn RecordingButton(
                                                         if let Some(ref pcm_file_arc) = pcm_file_clone {
                                                             use std::io::Write;
                                                             let mut file = pcm_file_arc.lock().unwrap();
-                                                            for &sample in data {
+                                                            for &sample in &processed_data {
                                                                 let sample_i16 = (sample * i16::MAX as f32) as i16;
                                                                 file.write_all(&sample_i16.to_le_bytes()).unwrap();
+                                                            }
+                                                        }
+                                                    },
+                                                    AudioFormat::Flac => {
+                                                        if let Some(ref flac_samples_arc) = flac_samples_clone {
+                                                            let mut samples = flac_samples_arc.lock().unwrap();
+                                                            for &sample in &processed_data {
+                                                                let sample_i32 = (sample * i32::MAX as f32) as i32;
+                                                                samples.push(sample_i32);
                                                             }
                                                         }
                                                     },
@@ -204,6 +254,37 @@ fn RecordingButton(
                                         },
                                         AudioFormat::Pcm => {
                                             // PCMファイルは自動的に閉じられる
+                                        },
+                                        AudioFormat::Flac => {
+                                            if let Some(flac_samples_arc) = flac_samples {
+                                                let samples = flac_samples_arc.lock().unwrap();
+                                                if !samples.is_empty() {
+                                                    // FLACエンコーディング
+                                                    let config = FlacEncoder::default().into_verified().unwrap();
+                                                    let source = MemSource::from_samples(
+                                                        &samples,
+                                                        1,  // モノラルとして扱う
+                                                        settings.bit_depth as usize,
+                                                        settings.sample_rate as usize,
+                                                    );
+                                                    
+                                                    match flacenc::encode_with_fixed_block_size(
+                                                        &config, source, config.block_size
+                                                    ) {
+                                                        Ok(flac_stream) => {
+                                                            let mut sink = ByteSink::new();
+                                                            if flac_stream.write(&mut sink).is_ok() {
+                                                                if let Err(e) = std::fs::write(&filename, sink.as_slice()) {
+                                                                    eprintln!("FLACファイル書き込みエラー: {}", e);
+                                                                }
+                                                            } else {
+                                                                eprintln!("FLACストリーム書き込みエラー");
+                                                            }
+                                                        },
+                                                        Err(e) => eprintln!("FLACエンコードエラー: {}", e),
+                                                    }
+                                                }
+                                            }
                                         },
                                     }
                                 });

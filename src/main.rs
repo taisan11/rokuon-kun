@@ -1,6 +1,8 @@
+#![windows_subsystem = "windows"]
 use freya::prelude::*;
 mod record_page;
 mod setting_page;
+mod effect;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {

@@ -11,6 +11,7 @@ freya = "0.3.4"
 hound = "3.5.1"
 dioxus = { version = "0.6", features = ["macro", "hooks"], default-features = false }
 nojson = "0.3.2"
+flacenc = "0.5.0"
 
 [profile.release]
 lto = true
